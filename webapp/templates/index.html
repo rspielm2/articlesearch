@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Knowledge Article Search</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: #f1f5f9;
+      color: #1e293b;
+      min-height: 100vh;
+      padding: 2.5rem 1rem 4rem;
+    }
+
+    .container { max-width: 860px; margin: 0 auto; }
+
+    header { text-align: center; margin-bottom: 2rem; }
+    header h1 { font-size: 1.75rem; font-weight: 700; color: #0f172a; }
+    header p { color: #64748b; margin-top: 0.4rem; font-size: 0.95rem; }
+
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 4px 12px rgba(0,0,0,.05);
+      padding: 1.75rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .card-title {
+      font-size: 0.9rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      color: #94a3b8;
+      margin-bottom: 1.25rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid #f1f5f9;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    /* ── Drop zone ── */
+    .drop-zone {
+      border: 2px dashed #cbd5e1;
+      border-radius: 8px;
+      padding: 1.75rem 1rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      position: relative;
+    }
+    .drop-zone:hover, .drop-zone.over { border-color: #3b82f6; background: #eff6ff; }
+    .drop-zone input[type="file"] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+    }
+    .drop-icon { font-size: 2rem; color: #94a3b8; margin-bottom: 0.4rem; }
+    .drop-label { font-size: 0.875rem; color: #64748b; line-height: 1.5; }
+    .drop-label strong { color: #3b82f6; }
+    .file-chosen {
+      margin-top: 0.6rem; font-size: 0.825rem; font-weight: 600; color: #16a34a;
+    }
+
+    /* ── Fields ── */
+    .field { margin-top: 1.25rem; }
+    .field label { display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.35rem; }
+    .field input[type="text"] {
+      width: 100%; padding: 0.6rem 0.85rem;
+      border: 1px solid #d1d5db; border-radius: 6px;
+      font-size: 0.95rem; font-family: inherit; color: #1e293b; outline: none;
+      transition: border-color .2s, box-shadow .2s;
+    }
+    .field input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.15); }
+
+    .check-row { display: flex; align-items: center; gap: 0.5rem; margin-top: 1rem; }
+    .check-row input { width: 15px; height: 15px; accent-color: #3b82f6; cursor: pointer; }
+    .check-row label { font-size: 0.875rem; color: #4b5563; cursor: pointer; }
+
+    .error-box {
+      background: #fef2f2; border: 1px solid #fecaca; border-radius: 7px;
+      padding: 0.75rem 1rem; font-size: 0.875rem; color: #dc2626; margin-top: 1rem;
+    }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
+      padding: 0.65rem 1.5rem; border: none; border-radius: 7px;
+      font-size: 0.925rem; font-weight: 600; font-family: inherit;
+      cursor: pointer; transition: background .15s, opacity .15s, transform .1s;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn-primary { background: #3b82f6; color: #fff; width: 100%; margin-top: 1.5rem; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-primary:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+    .btn-dl { background: #16a34a; color: #fff; padding: 0.5rem 1.1rem; font-size: 0.875rem; }
+    .btn-dl:hover { background: #15803d; }
+
+    /* ── Progress ── */
+    .prog-row {
+      display: flex; justify-content: space-between; align-items: baseline;
+      margin-bottom: 0.6rem;
+    }
+    .prog-label { font-size: 0.875rem; color: #64748b; }
+    .prog-pct { font-size: 0.875rem; font-weight: 700; color: #3b82f6; }
+    .prog-track { background: #e2e8f0; border-radius: 999px; height: 10px; overflow: hidden; }
+    .prog-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #3b82f6 0%, #6366f1 100%);
+      border-radius: 999px;
+      width: 0%;
+      transition: width .4s ease;
+    }
+    .prog-meta {
+      display: flex; justify-content: space-between;
+      margin-top: 0.55rem; font-size: 0.8rem; color: #94a3b8;
+    }
+    .prog-url { max-width: 70%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .prog-matches { font-weight: 600; color: #16a34a; }
+
+    .badge {
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      font-size: 0.75rem; font-weight: 600; padding: 0.2rem 0.55rem; border-radius: 999px;
+    }
+    .badge-done { background: #dcfce7; color: #16a34a; }
+
+    /* ── Results ── */
+    .results-hd {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 1.25rem;
+    }
+    .results-summary { font-size: 0.925rem; color: #374151; }
+    .results-summary strong { color: #0f172a; }
+
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    thead th {
+      text-align: left; padding: 0.6rem 0.75rem; font-weight: 600; color: #374151;
+      background: #f8fafc; border-bottom: 2px solid #e2e8f0; white-space: nowrap;
+    }
+    tbody tr { border-bottom: 1px solid #f1f5f9; transition: background .1s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #f8fafc; }
+    tbody td { padding: 0.6rem 0.75rem; color: #374151; vertical-align: top; }
+    tbody td a { color: #3b82f6; text-decoration: none; word-break: break-all; }
+    tbody td a:hover { text-decoration: underline; }
+
+    .empty { text-align: center; padding: 3rem 1rem; color: #94a3b8; font-size: 0.925rem; }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <h1>Knowledge Article Search</h1>
+    <p>Upload a sitemap, enter a search phrase, and download matching articles as a CSV.</p>
+  </header>
+
+  <!-- Search form -->
+  <div class="card" id="formCard">
+    <div class="card-title">Search Setup</div>
+
+    <div class="drop-zone" id="dropZone">
+      <input type="file" id="sitemapFile" accept=".xml,text/xml,application/xml" />
+      <div class="drop-icon">📄</div>
+      <div class="drop-label">
+        <strong>Click to upload</strong> or drag &amp; drop<br />
+        <span style="font-size:.8rem;color:#b0bec5">Sitemap XML file</span>
+      </div>
+      <div class="file-chosen hidden" id="fileChosen"></div>
+    </div>
+
+    <div class="field">
+      <label for="phraseInput">Search phrase</label>
+      <input type="text" id="phraseInput" placeholder="e.g. project closure" />
+    </div>
+
+    <div class="check-row">
+      <input type="checkbox" id="caseSensitive" />
+      <label for="caseSensitive">Case sensitive</label>
+    </div>
+
+    <div class="error-box hidden" id="formError"></div>
+
+    <button class="btn btn-primary" id="searchBtn" onclick="startSearch()">
+      Search Articles
+    </button>
+  </div>
+
+  <!-- Progress -->
+  <div class="card hidden" id="progressCard">
+    <div class="card-title">
+      Progress
+      <span class="badge badge-done hidden" id="doneBadge">✓ Complete</span>
+    </div>
+    <div class="prog-row">
+      <span class="prog-label" id="progLabel">Starting…</span>
+      <span class="prog-pct" id="progPct">0%</span>
+    </div>
+    <div class="prog-track">
+      <div class="prog-fill" id="progFill"></div>
+    </div>
+    <div class="prog-meta">
+      <span class="prog-url" id="progUrl">–</span>
+      <span class="prog-matches" id="progMatches">0 matches</span>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div class="card hidden" id="resultsCard">
+    <div class="results-hd">
+      <div class="results-summary" id="resultsSummary"></div>
+      <button class="btn btn-dl hidden" id="dlBtn" onclick="downloadCSV()">⬇ Download CSV</button>
+    </div>
+    <div class="table-wrap" id="resultsBody"></div>
+  </div>
+
+</div>
+
+<script>
+  let jobId = null;
+  let es = null;
+
+  // ── Drop zone ──────────────────────────────────────────
+  const dropZone = document.getElementById('dropZone');
+  const fileInput = document.getElementById('sitemapFile');
+  const fileChosen = document.getElementById('fileChosen');
+
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files[0]) showFile(fileInput.files[0].name);
+  });
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('over');
+    if (e.dataTransfer.files[0]) {
+      fileInput.files = e.dataTransfer.files;
+      showFile(e.dataTransfer.files[0].name);
+    }
+  });
+
+  function showFile(name) {
+    fileChosen.textContent = '✓ ' + name;
+    fileChosen.classList.remove('hidden');
+  }
+
+  // ── Start search ───────────────────────────────────────
+  async function startSearch() {
+    const file = fileInput.files[0];
+    const phrase = document.getElementById('phraseInput').value.trim();
+    const caseSensitive = document.getElementById('caseSensitive').checked;
+    const errEl = document.getElementById('formError');
+
+    errEl.classList.add('hidden');
+    if (!file)   { showErr('Please upload a sitemap XML file.'); return; }
+    if (!phrase) { showErr('Please enter a search phrase.'); return; }
+
+    const btn = document.getElementById('searchBtn');
+    btn.disabled = true;
+    btn.textContent = 'Starting…';
+
+    const fd = new FormData();
+    fd.append('sitemap', file);
+    fd.append('phrase', phrase);
+    fd.append('case_sensitive', caseSensitive ? 'true' : 'false');
+
+    let res;
+    try {
+      res = await fetch('/start', { method: 'POST', body: fd });
+    } catch {
+      showErr('Network error. Please try again.');
+      btn.disabled = false; btn.textContent = 'Search Articles';
+      return;
+    }
+
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      showErr(data.error || 'An unexpected error occurred.');
+      btn.disabled = false; btn.textContent = 'Search Articles';
+      return;
+    }
+
+    jobId = data.job_id;
+
+    // Reset UI
+    document.getElementById('progressCard').classList.remove('hidden');
+    document.getElementById('resultsCard').classList.add('hidden');
+    document.getElementById('resultsBody').innerHTML = '';
+    document.getElementById('dlBtn').classList.add('hidden');
+    document.getElementById('doneBadge').classList.add('hidden');
+    document.getElementById('progFill').style.width = '0%';
+    document.getElementById('progPct').textContent = '0%';
+    document.getElementById('progLabel').textContent = 'Starting…';
+    document.getElementById('progMatches').textContent = '0 matches';
+    document.getElementById('progUrl').textContent = '–';
+    btn.textContent = 'Searching…';
+
+    openSSE(data.job_id, data.total);
+  }
+
+  // ── SSE ────────────────────────────────────────────────
+  function openSSE(id, total) {
+    if (es) es.close();
+    es = new EventSource('/progress/' + id);
+
+    es.onmessage = e => {
+      const d = JSON.parse(e.data);
+      if (d.error) { showErr(d.error); es.close(); return; }
+
+      const pct = total > 0 ? Math.round((d.current / total) * 100) : 0;
+      document.getElementById('progFill').style.width = pct + '%';
+      document.getElementById('progPct').textContent = pct + '%';
+      document.getElementById('progLabel').textContent =
+        d.current.toLocaleString() + ' / ' + total.toLocaleString() + ' articles checked';
+      document.getElementById('progUrl').textContent =
+        d.current_url ? d.current_url.replace(/-/g, ' ') : '–';
+      const mc = d.match_count;
+      document.getElementById('progMatches').textContent =
+        mc === 1 ? '1 match' : mc + ' matches';
+
+      if (d.done) {
+        es.close();
+        document.getElementById('progFill').style.width = '100%';
+        document.getElementById('progPct').textContent = '100%';
+        document.getElementById('progLabel').textContent =
+          total.toLocaleString() + ' articles checked';
+        document.getElementById('doneBadge').classList.remove('hidden');
+        const btn = document.getElementById('searchBtn');
+        btn.textContent = 'Search Articles';
+        btn.disabled = false;
+        loadResults(id);
+      }
+    };
+
+    es.onerror = () => {
+      es.close();
+      const btn = document.getElementById('searchBtn');
+      btn.disabled = false;
+      btn.textContent = 'Search Articles';
+    };
+  }
+
+  // ── Load results ───────────────────────────────────────
+  async function loadResults(id) {
+    const res = await fetch('/results/' + id);
+    const data = await res.json();
+
+    const card = document.getElementById('resultsCard');
+    const summary = document.getElementById('resultsSummary');
+    const body = document.getElementById('resultsBody');
+    const dlBtn = document.getElementById('dlBtn');
+
+    card.classList.remove('hidden');
+
+    if (!data.matches || data.matches.length === 0) {
+      summary.innerHTML = 'No articles found matching <em>' + esc(data.phrase) + '</em>.';
+      body.innerHTML = '<div class="empty">Try a different phrase or check your sitemap file.</div>';
+      return;
+    }
+
+    const n = data.matches.length;
+    summary.innerHTML =
+      'Found <strong>' + n + '</strong> article' + (n === 1 ? '' : 's') +
+      ' matching <em>' + esc(data.phrase) + '</em>.';
+    dlBtn.classList.remove('hidden');
+
+    const rows = data.matches.map(m =>
+      '<tr>' +
+        '<td>' + esc(m['URL Name'].replace(/-/g, ' ')) + '</td>' +
+        '<td><a href="' + esc(m['Full URL']) + '" target="_blank" rel="noopener">' +
+          esc(m['Full URL']) + '</a></td>' +
+      '</tr>'
+    ).join('');
+
+    body.innerHTML =
+      '<table>' +
+        '<thead><tr><th>Article Title</th><th>Full URL</th></tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+      '</table>';
+
+    card.scrollIntoView({ behavior: 'smooth' });
+  }
+
+  function downloadCSV() {
+    if (jobId) window.location.href = '/download/' + jobId;
+  }
+
+  function showErr(msg) {
+    const el = document.getElementById('formError');
+    el.textContent = msg;
+    el.classList.remove('hidden');
+  }
+
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+</script>
+</body>
+</html>
