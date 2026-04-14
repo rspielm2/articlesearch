@@ -11,16 +11,34 @@ import urllib.parse
 import urllib.error
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
-from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, Response, render_template
+import redis
 
 app = Flask(__name__)
 
-_jobs: dict = {}
-_jobs_lock = threading.Lock()
-
+SITEMAP_URL = "https://datasite.my.site.com/datasiteassist/s/sitemap-topicarticle-1.xml"
 BASE_API = "{base}/services/data/v58.0/support/knowledgeArticles/{url_name}"
+JOB_TTL = 7200  # seconds — jobs expire from Redis after 2 hours
 
+_redis = redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
+
+
+# ── Redis helpers ──────────────────────────────────────────────────────────────
+
+def _job_key(job_id: str) -> str:
+    return f"job:{job_id}"
+
+
+def _get_job(job_id: str):
+    data = _redis.get(_job_key(job_id))
+    return json.loads(data) if data else None
+
+
+def _set_job(job_id: str, job: dict):
+    _redis.set(_job_key(job_id), json.dumps(job), ex=JOB_TTL)
+
+
+# ── HTML stripping ─────────────────────────────────────────────────────────────
 
 class _HTMLStripper(HTMLParser):
     def __init__(self):
@@ -38,6 +56,41 @@ def _strip_html(html: str) -> str:
     s = _HTMLStripper()
     s.feed(html)
     return s.get_text()
+
+
+# ── Sitemap & article fetching ─────────────────────────────────────────────────
+
+def _fetch_sitemap():
+    """Fetch and parse the sitemap. Returns (base_url, [(url_name, full_url), ...])."""
+    req = urllib.request.Request(SITEMAP_URL, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            xml_content = resp.read().decode("utf-8", errors="replace")
+    except Exception as e:
+        raise RuntimeError(f"Could not fetch sitemap: {e}")
+
+    urls = []
+    base_url = ""
+    try:
+        root = ET.fromstring(xml_content)
+        ns = root.tag.split("}")[0] + "}" if root.tag.startswith("{") else ""
+        for url_elem in root.iter(f"{ns}url"):
+            loc = url_elem.find(f"{ns}loc")
+            if loc is not None and loc.text:
+                full_url = loc.text.strip()
+                url_name = full_url.rstrip("/").split("/")[-1]
+                if not base_url and "/s/article/" in full_url:
+                    base_url = full_url.split("/s/article/")[0]
+                urls.append((url_name, full_url))
+    except ET.ParseError as e:
+        raise RuntimeError(f"Could not parse sitemap: {e}")
+
+    if not urls:
+        raise RuntimeError("No URLs found in the sitemap.")
+    if not base_url:
+        raise RuntimeError("Could not determine API base URL from sitemap.")
+
+    return base_url, urls
 
 
 def _fetch_article_text(base_url: str, url_name: str):
@@ -69,72 +122,41 @@ def _fetch_article_text(base_url: str, url_name: str):
     return " ".join(parts)
 
 
-def _parse_sitemap(xml_content: str):
-    """
-    Parse a standard sitemap XML file.
-    Returns (base_url, [(url_name, full_url), ...]).
-    base_url is derived from URLs containing /s/article/.
-    """
-    urls = []
-    base_url = ""
-
-    try:
-        root = ET.fromstring(xml_content)
-        ns = root.tag.split("}")[0] + "}" if root.tag.startswith("{") else ""
-
-        for url_elem in root.iter(f"{ns}url"):
-            loc = url_elem.find(f"{ns}loc")
-            if loc is not None and loc.text:
-                full_url = loc.text.strip()
-                url_name = full_url.rstrip("/").split("/")[-1]
-
-                if not base_url and "/s/article/" in full_url:
-                    base_url = full_url.split("/s/article/")[0]
-
-                urls.append((url_name, full_url))
-    except ET.ParseError:
-        pass
-
-    return base_url, urls
-
-
-def _cleanup_old_jobs():
-    cutoff = datetime.utcnow() - timedelta(hours=2)
-    with _jobs_lock:
-        stale = [
-            jid for jid, job in _jobs.items()
-            if job.get("created_at", datetime.utcnow()) < cutoff
-        ]
-        for jid in stale:
-            del _jobs[jid]
-
+# ── Search worker ──────────────────────────────────────────────────────────────
 
 def _run_search(job_id: str, base_url: str, urls: list, phrase: str, case_sensitive: bool):
-    job = _jobs[job_id]
     search_term = phrase if case_sensitive else phrase.lower()
     matches = []
 
     for i, (url_name, full_url) in enumerate(urls):
-        with _jobs_lock:
-            if job.get("cancelled"):
-                break
-            job["current"] = i + 1
-            job["current_url"] = url_name
+        # Write progress to Redis on every article
+        job = _get_job(job_id)
+        if not job:
+            return  # job was evicted; nothing to do
+
+        job["current"] = i + 1
+        job["current_url"] = url_name
+        _set_job(job_id, job)
 
         text = _fetch_article_text(base_url, url_name)
         if text is not None:
             haystack = text if case_sensitive else text.lower()
             if search_term in haystack:
                 matches.append({"URL Name": url_name, "Full URL": full_url})
-                with _jobs_lock:
-                    job["matches"] = list(matches)
+                job["matches"] = matches
+                _set_job(job_id, job)
 
         time.sleep(0.05)
 
-    with _jobs_lock:
+    # Mark complete
+    job = _get_job(job_id)
+    if job:
         job["matches"] = matches
         job["done"] = True
+        _set_job(job_id, job)
 
+
+# ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
@@ -143,38 +165,26 @@ def index():
 
 @app.route("/start", methods=["POST"])
 def start_search():
-    _cleanup_old_jobs()
-
-    sitemap_file = request.files.get("sitemap")
     phrase = request.form.get("phrase", "").strip()
     case_sensitive = request.form.get("case_sensitive", "false").lower() == "true"
 
-    if not sitemap_file or not phrase:
-        return jsonify({"error": "A sitemap file and search phrase are required."}), 400
+    if not phrase:
+        return jsonify({"error": "Please enter a search phrase."}), 400
 
-    xml_content = sitemap_file.read().decode("utf-8", errors="replace")
-    base_url, urls = _parse_sitemap(xml_content)
-
-    if not urls:
-        return jsonify({"error": "No URLs were found in the sitemap."}), 400
-    if not base_url:
-        return jsonify({
-            "error": "Could not determine the API base URL. "
-                     "Ensure sitemap URLs contain /s/article/."
-        }), 400
+    try:
+        base_url, urls = _fetch_sitemap()
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 502
 
     job_id = str(uuid.uuid4())
-    with _jobs_lock:
-        _jobs[job_id] = {
-            "done": False,
-            "current": 0,
-            "total": len(urls),
-            "current_url": "",
-            "matches": [],
-            "cancelled": False,
-            "created_at": datetime.utcnow(),
-            "phrase": phrase,
-        }
+    _set_job(job_id, {
+        "done": False,
+        "current": 0,
+        "total": len(urls),
+        "current_url": "",
+        "matches": [],
+        "phrase": phrase,
+    })
 
     thread = threading.Thread(
         target=_run_search,
@@ -190,20 +200,18 @@ def start_search():
 def progress(job_id: str):
     def generate():
         while True:
-            with _jobs_lock:
-                job = _jobs.get(job_id)
-                if not job:
-                    yield f"data: {json.dumps({'error': 'Job not found'})}\n\n"
-                    return
+            job = _get_job(job_id)
+            if not job:
+                yield f"data: {json.dumps({'error': 'Job not found'})}\n\n"
+                return
 
-                payload = {
-                    "current": job["current"],
-                    "total": job["total"],
-                    "current_url": job["current_url"],
-                    "done": job["done"],
-                    "match_count": len(job["matches"]),
-                }
-
+            payload = {
+                "current": job["current"],
+                "total": job["total"],
+                "current_url": job["current_url"],
+                "done": job["done"],
+                "match_count": len(job["matches"]),
+            }
             yield f"data: {json.dumps(payload)}\n\n"
 
             if payload["done"]:
@@ -220,8 +228,7 @@ def progress(job_id: str):
 
 @app.route("/results/<job_id>")
 def results(job_id: str):
-    with _jobs_lock:
-        job = _jobs.get(job_id)
+    job = _get_job(job_id)
     if not job or not job["done"]:
         return jsonify({"error": "Job not found or not yet complete."}), 404
     return jsonify({"matches": job["matches"], "phrase": job.get("phrase", "")})
@@ -229,8 +236,7 @@ def results(job_id: str):
 
 @app.route("/download/<job_id>")
 def download(job_id: str):
-    with _jobs_lock:
-        job = _jobs.get(job_id)
+    job = _get_job(job_id)
     if not job or not job["done"]:
         return jsonify({"error": "Job not found or not yet complete."}), 404
 
@@ -241,12 +247,11 @@ def download(job_id: str):
     output.seek(0)
 
     safe_phrase = re.sub(r"[^\w\s-]", "_", job.get("phrase", "results")).strip().replace(" ", "_")
-    filename = f"search_results_{safe_phrase}.csv"
 
     return Response(
         output.getvalue(),
         mimetype="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="search_results_{safe_phrase}.csv"'},
     )
 
 

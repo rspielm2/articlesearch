@@ -45,29 +45,7 @@
       justify-content: space-between;
     }
 
-    /* ── Drop zone ── */
-    .drop-zone {
-      border: 2px dashed #cbd5e1;
-      border-radius: 8px;
-      padding: 1.75rem 1rem;
-      text-align: center;
-      cursor: pointer;
-      transition: border-color .2s, background .2s;
-      position: relative;
-    }
-    .drop-zone:hover, .drop-zone.over { border-color: #3b82f6; background: #eff6ff; }
-    .drop-zone input[type="file"] {
-      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
-    }
-    .drop-icon { font-size: 2rem; color: #94a3b8; margin-bottom: 0.4rem; }
-    .drop-label { font-size: 0.875rem; color: #64748b; line-height: 1.5; }
-    .drop-label strong { color: #3b82f6; }
-    .file-chosen {
-      margin-top: 0.6rem; font-size: 0.825rem; font-weight: 600; color: #16a34a;
-    }
-
     /* ── Fields ── */
-    .field { margin-top: 1.25rem; }
     .field label { display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.35rem; }
     .field input[type="text"] {
       width: 100%; padding: 0.6rem 0.85rem;
@@ -159,22 +137,12 @@
 
   <header>
     <h1>Knowledge Article Search</h1>
-    <p>Upload a sitemap, enter a search phrase, and download matching articles as a CSV.</p>
+    <p>Search all Datasite knowledge articles and download matching URLs as a CSV.</p>
   </header>
 
   <!-- Search form -->
   <div class="card" id="formCard">
-    <div class="card-title">Search Setup</div>
-
-    <div class="drop-zone" id="dropZone">
-      <input type="file" id="sitemapFile" accept=".xml,text/xml,application/xml" />
-      <div class="drop-icon">📄</div>
-      <div class="drop-label">
-        <strong>Click to upload</strong> or drag &amp; drop<br />
-        <span style="font-size:.8rem;color:#b0bec5">Sitemap XML file</span>
-      </div>
-      <div class="file-chosen hidden" id="fileChosen"></div>
-    </div>
+    <div class="card-title">Search</div>
 
     <div class="field">
       <label for="phraseInput">Search phrase</label>
@@ -227,39 +195,17 @@
   let jobId = null;
   let es = null;
 
-  // ── Drop zone ──────────────────────────────────────────
-  const dropZone = document.getElementById('dropZone');
-  const fileInput = document.getElementById('sitemapFile');
-  const fileChosen = document.getElementById('fileChosen');
-
-  fileInput.addEventListener('change', () => {
-    if (fileInput.files[0]) showFile(fileInput.files[0].name);
-  });
-  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
-  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
-  dropZone.addEventListener('drop', e => {
-    e.preventDefault();
-    dropZone.classList.remove('over');
-    if (e.dataTransfer.files[0]) {
-      fileInput.files = e.dataTransfer.files;
-      showFile(e.dataTransfer.files[0].name);
-    }
+  // Allow submitting with Enter key
+  document.getElementById('phraseInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') startSearch();
   });
 
-  function showFile(name) {
-    fileChosen.textContent = '✓ ' + name;
-    fileChosen.classList.remove('hidden');
-  }
-
-  // ── Start search ───────────────────────────────────────
   async function startSearch() {
-    const file = fileInput.files[0];
     const phrase = document.getElementById('phraseInput').value.trim();
     const caseSensitive = document.getElementById('caseSensitive').checked;
     const errEl = document.getElementById('formError');
 
     errEl.classList.add('hidden');
-    if (!file)   { showErr('Please upload a sitemap XML file.'); return; }
     if (!phrase) { showErr('Please enter a search phrase.'); return; }
 
     const btn = document.getElementById('searchBtn');
@@ -267,7 +213,6 @@
     btn.textContent = 'Starting…';
 
     const fd = new FormData();
-    fd.append('sitemap', file);
     fd.append('phrase', phrase);
     fd.append('case_sensitive', caseSensitive ? 'true' : 'false');
 
@@ -305,7 +250,6 @@
     openSSE(data.job_id, data.total);
   }
 
-  // ── SSE ────────────────────────────────────────────────
   function openSSE(id, total) {
     if (es) es.close();
     es = new EventSource('/progress/' + id);
@@ -347,7 +291,6 @@
     };
   }
 
-  // ── Load results ───────────────────────────────────────
   async function loadResults(id) {
     const res = await fetch('/results/' + id);
     const data = await res.json();
@@ -361,7 +304,7 @@
 
     if (!data.matches || data.matches.length === 0) {
       summary.innerHTML = 'No articles found matching <em>' + esc(data.phrase) + '</em>.';
-      body.innerHTML = '<div class="empty">Try a different phrase or check your sitemap file.</div>';
+      body.innerHTML = '<div class="empty">Try a different search phrase.</div>';
       return;
     }
 
